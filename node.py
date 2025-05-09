@@ -96,6 +96,7 @@ def main(args=None):
     x, y, z, th = 0.0, 0.0, 0.0, 0.0
     
     # Wait for subscribers
+    '''
     sub_wait_count = 0
     while rclpy.ok() and publisher.get_subscription_count() == 0:
         if sub_wait_count % (int(loop_rate_hz) * 2) == 0: # Log every 2 seconds approx
@@ -107,6 +108,7 @@ def main(args=None):
         node.destroy_node()
         rclpy.shutdown()
         return
+        '''
 
     logger.info("Teleop node started. Ready for client connection.")
     logger.info(vels(current_speed_setting, current_turn_setting))
