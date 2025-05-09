@@ -117,7 +117,7 @@ def main(args=None):
     loop_rate = node.create_rate(loop_rate_hz)
     
     try:
-        while rclpy.ok():
+        while True:
             # Handle connections
             if client_socket is None:
                 try:
