@@ -207,26 +207,48 @@ class SocketServer(threading.Thread):
         while self.running:
             try:
                 client, addr = self.sock.accept()
-                self.logger(f"Connected to {addr}")
-                client.settimeout(1.0)
                 self.client_connected = True
+                self.logger(f"Connected to {addr}")
+                client.settimeout(1.0) # Timeout for client.recv()
 
                 while self.client_connected and self.running:
-                    data = client.recv(self.buffer_size)
-                    if not data:
+                    try:
+                        data = client.recv(self.buffer_size)
+                        if not data:
+                            self.logger("Client disconnected (no data received).")
+                            self.client_connected = False
+                            break
+                        
+                        command = data.decode('utf-8').strip()
+                        if command: # Only update if command is not empty
+                           self.last_command = command
+                        # self.logger(f"Received command: {command}") # Can be noisy
+                        
+                    except socket.timeout:
+                        if not self.running: # Main thread requested stop
+                            self.client_connected = False
+                        continue # Continue to check self.running or wait for more data
+                    except ConnectionResetError:
+                        self.logger("Client connection reset.")
                         self.client_connected = False
                         break
-                    cmd = data.decode('utf-8').strip()
-                    if cmd:
-                        self.last_command = cmd
-
+                    except Exception as e:
+                        self.logger(f"Error receiving data: {e}")
+                        self.client_connected = False
+                        break
+                
+                if client:
+                    client.close()
+                self.client_connected = False # Reset flag
+                
             except socket.timeout:
+                # self.sock.accept() timed out, loop again to check self.running
                 continue
             except Exception as e:
                 if self.running:
                     self.logger(f"Socket server error: {e}")
-                self.running = False
-
+                self.running = False # Stop running on other major errors
+        
         if self.sock:
             self.sock.close()
         self.logger("SocketServer thread finished.")
@@ -291,6 +313,7 @@ def main(args=None):
         loop_rate = node.create_rate(20) # Process commands at 20 Hz 
         
         while rclpy.ok():
+            print("looping")
             command = socket_server.get_last_command()
 
             logger = node.get_logger()
