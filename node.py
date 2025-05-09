@@ -197,7 +197,6 @@ class SocketServer(threading.Thread):
         self.logger(f"Socket server started on {self.host}:{self.port}")
 
     def run(self):
-        print("SocketServer thread started.")
         try:
             self.setup_server()
         except Exception as e:
@@ -215,6 +214,7 @@ class SocketServer(threading.Thread):
                 while self.client_connected and self.running:
                     try:
                         data = client.recv(self.buffer_size)
+                        print(f"Received data: {data}") # Debugging line
                         if not data:
                             self.logger("Client disconnected (no data received).")
                             self.client_connected = False
