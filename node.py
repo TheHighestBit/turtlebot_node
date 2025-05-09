@@ -187,6 +187,7 @@ class SocketServer(threading.Thread):
         self.last_command = ''
         # self.daemon = True # Explicit join is preferred
         self.logger = node_logger if node_logger else print # Use node logger or print
+        self.command_lock = threading.Lock() # Lock for thread-safe command access
 
     def setup_server(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -221,8 +222,9 @@ class SocketServer(threading.Thread):
                         
                         command = data.decode('utf-8').strip()
                         if command: # Only update if command is not empty
-                           self.last_command = command
-                        # self.logger(f"Received command: {command}") # Can be noisy
+                            with self.command_lock:
+                                self.last_command = command
+                        self.logger(f"Received command: {command}") # Can be noisy
                         
                     except socket.timeout:
                         if not self.running: # Main thread requested stop
@@ -259,10 +261,10 @@ class SocketServer(threading.Thread):
         self.join(timeout=2.0) # Wait for the thread to finish
             
     def get_last_command(self):
-        # This is a basic way; for more complex scenarios, a thread-safe queue might be better.
-        cmd = self.last_command
-        self.last_command = '' # Clear after reading
-        return cmd
+        with self.command_lock:
+            command = self.last_command
+            self.last_command = ''
+        return command
 
 def vels(speed: float, turn: float) -> str:
     return f"currently:\tspeed {speed:.2f}\tturn {turn:.2f}"
