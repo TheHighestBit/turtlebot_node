@@ -272,7 +272,7 @@ def main(args=None):
     node = rclpy.create_node('teleop_twist_socket_node') # Changed node name slightly for clarity
 
     # Declare and get parameters
-    node.declare_parameter('speed', 0.5)
+    node.declare_parameter('speed', 0.2)
     node.declare_parameter('turn', 1.0)
     node.declare_parameter('speed_limit', 1.0) # Max linear speed
     node.declare_parameter('turn_limit', 1.0)  # Max angular speed
