@@ -315,6 +315,7 @@ def main(args=None):
         loop_rate = node.create_rate(20) # Process commands at 20 Hz 
         
         while rclpy.ok():
+            print("looping...")
             command = socket_server.get_last_command()
             logger = node.get_logger()
             logger.info(f"Socket command: {command}") # For debugging, can be removed later
