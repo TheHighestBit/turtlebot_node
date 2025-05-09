@@ -141,7 +141,7 @@ def main(args=None):
                         data = client_socket.recv(1024)
                         if data:
                             command = data.decode('utf-8').strip()
-                            logger.info(f"Received command: '{command}'")
+                            print(f"Received command: '{command}'")
                             if command == 'quit':
                                 logger.info("Quit command received. Shutting down.")
                                 break
