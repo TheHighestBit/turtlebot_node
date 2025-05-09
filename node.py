@@ -314,6 +314,7 @@ def main(args=None):
         
         while rclpy.ok():
             command = socket_server.get_last_command()
+            print(command)
             
             if command:
                 key = command[0] if command else ''
