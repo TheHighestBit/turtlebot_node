@@ -197,6 +197,7 @@ class SocketServer(threading.Thread):
         self.logger(f"Socket server started on {self.host}:{self.port}")
 
     def run(self):
+        print("SocketServer thread started.")
         try:
             self.setup_server()
         except Exception as e:
