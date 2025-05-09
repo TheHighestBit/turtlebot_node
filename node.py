@@ -314,7 +314,8 @@ def main(args=None):
         
         while rclpy.ok():
             command = socket_server.get_last_command()
-            print(f"Received command: {command}") # For debugging, can be removed later
+            logger = node.get_logger()
+            logger.info(f"Socket command: {command}") # For debugging, can be removed later
             
             if command:
                 key = command[0] if command else ''
