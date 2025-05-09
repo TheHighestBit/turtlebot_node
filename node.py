@@ -294,7 +294,7 @@ def main(args=None):
     socket_server = None
 
     try:
-        pub_thread = PublishThread(node, repeat, use_stamped, twist_frame)
+        pub_thread = PublishThread(node, repeat, True, twist_frame)
         socket_server = SocketServer(port=socket_port, node_logger=node.get_logger().info)
         socket_server.start()
 
