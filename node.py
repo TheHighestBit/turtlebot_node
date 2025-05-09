@@ -316,6 +316,9 @@ def main(args=None):
             print("looping")
             command = socket_server.get_last_command()
 
+            if not command:
+                continue
+
             logger = node.get_logger()
             logger.info(f"Socket command: {command}") # For debugging, can be removed later
             
