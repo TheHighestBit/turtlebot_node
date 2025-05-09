@@ -214,7 +214,6 @@ class SocketServer(threading.Thread):
                 while self.client_connected and self.running:
                     try:
                         data = client.recv(self.buffer_size)
-                        print(f"Received data: {data}") # Debugging line
                         if not data:
                             self.logger("Client disconnected (no data received).")
                             self.client_connected = False
@@ -223,6 +222,7 @@ class SocketServer(threading.Thread):
                         command = data.decode('utf-8').strip()
                         if command: # Only update if command is not empty
                            self.last_command = command
+                           print(f"Received command: {command}")
                         # self.logger(f"Received command: {command}") # Can be noisy
                         
                     except socket.timeout:
