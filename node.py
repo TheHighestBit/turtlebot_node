@@ -349,8 +349,6 @@ def main(args=None):
                     # node.get_logger().info(f"Unknown key '{key}', stopping.")
                     
                 pub_thread.update(x, y, z, th, current_speed, current_turn)
-            
-            loop_rate.sleep()
 
     except KeyboardInterrupt:
         node.get_logger().info('KeyboardInterrupt, shutting down.')
