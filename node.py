@@ -6,14 +6,15 @@ from __future__ import print_function
 
 import threading
 import socket
-import json
+# import json # json was imported but not used
+import time
 
-import rospy
+import rclpy
+from rclpy.node import Node
 
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import TwistStamped
 
-TwistMsg = Twist
 
 msg = """
 Moving around:
@@ -36,43 +37,52 @@ q/z : increase/decrease max speeds by 10%
 w/x : increase/decrease only linear speed by 10%
 e/c : increase/decrease only angular speed by 10%
 
-CTRL-C to quit
+CTRL-C to quit (in terminal) or send 'quit' command via socket
 """
 
 moveBindings = {
-        'i':(1,0,0,0),
-        'o':(1,0,0,-1),
-        'j':(0,0,0,1),
-        'l':(0,0,0,-1),
-        'u':(1,0,0,1),
-        ',':(-1,0,0,0),
-        '.':(-1,0,0,1),
-        'm':(-1,0,0,-1),
-        'O':(1,-1,0,0),
-        'I':(1,0,0,0),
-        'J':(0,1,0,0),
-        'L':(0,-1,0,0),
-        'U':(1,1,0,0),
-        '<':(-1,0,0,0),
-        '>':(-1,-1,0,0),
-        'M':(-1,1,0,0),
-        't':(0,0,1,0),
-        'b':(0,0,-1,0),
+        'i':(1.0,0.0,0.0,0.0),
+        'o':(1.0,0.0,0.0,-1.0),
+        'j':(0.0,0.0,0.0,1.0),
+        'l':(0.0,0.0,0.0,-1.0),
+        'u':(1.0,0.0,0.0,1.0),
+        ',':(-1.0,0.0,0.0,0.0),
+        '.':(-1.0,0.0,0.0,1.0),
+        'm':(-1.0,0.0,0.0,-1.0),
+        'O':(1.0,-1.0,0.0,0.0),
+        'I':(1.0,0.0,0.0,0.0),
+        'J':(0.0,1.0,0.0,0.0),
+        'L':(0.0,-1.0,0.0,0.0),
+        'U':(1.0,1.0,0.0,0.0),
+        '<':(-1.0,0.0,0.0,0.0), # Note: '<' might be hard to send, consider changing
+        '>':(-1.0,-1.0,0.0,0.0), # Note: '>' might be hard to send, consider changing
+        'M':(-1.0,1.0,0.0,0.0),
+        't':(0.0,0.0,1.0,0.0),
+        'b':(0.0,0.0,-1.0,0.0),
     }
 
 speedBindings={
         'q':(1.1,1.1),
         'z':(.9,.9),
-        'w':(1.1,1),
-        'x':(.9,1),
-        'e':(1,1.1),
-        'c':(1,.9),
+        'w':(1.1,1.0),
+        'x':(.9,1.0),
+        'e':(1.0,1.1),
+        'c':(1.0,.9),
     }
 
 class PublishThread(threading.Thread):
-    def __init__(self, rate):
+    def __init__(self, node: Node, rate: float, use_stamped: bool, frame_id: str):
         super(PublishThread, self).__init__()
-        self.publisher = rospy.Publisher('cmd_vel', TwistMsg, queue_size = 1)
+        self.node = node
+        self.use_stamped = use_stamped
+        self.frame_id = frame_id
+
+        if self.use_stamped:
+            self.twist_msg_type = TwistStamped
+        else:
+            self.twist_msg_type = Twist
+
+        self.publisher = self.node.create_publisher(self.twist_msg_type, 'cmd_vel', 10)
         self.x = 0.0
         self.y = 0.0
         self.z = 0.0
@@ -82,83 +92,91 @@ class PublishThread(threading.Thread):
         self.condition = threading.Condition()
         self.done = False
 
-        # Set timeout to None if rate is 0 (causes new_message to wait forever
-        # for new data to publish)
         if rate != 0.0:
             self.timeout = 1.0 / rate
         else:
-            self.timeout = None
+            self.timeout = None # Wait indefinitely for new message
 
         self.start()
 
     def wait_for_subscribers(self):
         i = 0
-        while not rospy.is_shutdown() and self.publisher.get_num_connections() == 0:
+        while rclpy.ok() and self.publisher.get_subscription_count() == 0:
             if i == 4:
-                print("Waiting for subscriber to connect to {}".format(self.publisher.name))
-            rospy.sleep(0.5)
-            i += 1
-            i = i % 5
-        if rospy.is_shutdown():
+                self.node.get_logger().info(
+                    "Waiting for subscriber to connect to {}".format(self.publisher.topic_name))
+            time.sleep(0.5)
+            i = (i + 1) % 5
+        if not rclpy.ok():
+            self.node.get_logger().error("Shutdown request received before subscribers connected")
             raise Exception("Got shutdown request before subscribers connected")
 
-    def update(self, x, y, z, th, speed, turn):
-        self.condition.acquire()
-        self.x = x
-        self.y = y
-        self.z = z
-        self.th = th
-        self.speed = speed
-        self.turn = turn
-        # Notify publish thread that we have a new message.
-        self.condition.notify()
-        self.condition.release()
+    def update(self, x: float, y: float, z: float, th: float, speed: float, turn: float):
+        with self.condition:
+            self.x = x
+            self.y = y
+            self.z = z
+            self.th = th
+            self.speed = speed
+            self.turn = turn
+            self.condition.notify()
 
     def stop(self):
         self.done = True
-        self.update(0, 0, 0, 0, 0, 0)
-        self.join()
+        self.update(0.0, 0.0, 0.0, 0.0, 0.0, 0.0) # Send a final zero command
+        self.join(timeout=2.0) # Wait for thread to finish
 
     def run(self):
-        twist_msg = TwistMsg()
+        twist_msg_instance = self.twist_msg_type()
 
-        if stamped:
-            twist = twist_msg.twist
-            twist_msg.header.stamp = rospy.Time.now()
-            twist_msg.header.frame_id = twist_frame
+        if self.use_stamped:
+            if not isinstance(twist_msg_instance, TwistStamped):
+                 self.node.get_logger().fatal("Logic error: use_stamped is True but message is not TwistStamped!")
+                 return
+            twist_content = twist_msg_instance.twist
+            twist_msg_instance.header.frame_id = self.frame_id
         else:
-            twist = twist_msg
-        while not self.done:
-            if stamped:
-                twist_msg.header.stamp = rospy.Time.now()
-            self.condition.acquire()
-            # Wait for a new message or timeout.
-            self.condition.wait(self.timeout)
+            if not isinstance(twist_msg_instance, Twist):
+                 self.node.get_logger().fatal("Logic error: use_stamped is False but message is not Twist!")
+                 return
+            twist_content = twist_msg_instance
 
-            # Copy state into twist message.
-            twist.linear.x = self.x * self.speed
-            twist.linear.y = self.y * self.speed
-            twist.linear.z = self.z * self.speed
-            twist.angular.x = 0
-            twist.angular.y = 0
-            twist.angular.z = self.th * self.turn
+        while not self.done and rclpy.ok():
+            if self.use_stamped:
+                twist_msg_instance.header.stamp = self.node.get_clock().now().to_msg()
+            
+            with self.condition:
+                if self.timeout is not None:
+                    self.condition.wait(self.timeout)
+                else:
+                    self.condition.wait() # Wait indefinitely if no timeout (rate is 0)
+                
+                if self.done: # Check done flag again after wait
+                    break
 
-            self.condition.release()
+                twist_content.linear.x = self.x * self.speed
+                twist_content.linear.y = self.y * self.speed
+                twist_content.linear.z = self.z * self.speed
+                twist_content.angular.x = 0.0
+                twist_content.angular.y = 0.0
+                twist_content.angular.z = self.th * self.turn
 
-            # Publish.
-            self.publisher.publish(twist_msg)
+            self.publisher.publish(twist_msg_instance)
 
-        # Publish stop message when thread exits.
-        twist.linear.x = 0
-        twist.linear.y = 0
-        twist.linear.z = 0
-        twist.angular.x = 0
-        twist.angular.y = 0
-        twist.angular.z = 0
-        self.publisher.publish(twist_msg)
+        # Publish stop message when thread exits
+        twist_content.linear.x = 0.0
+        twist_content.linear.y = 0.0
+        twist_content.linear.z = 0.0
+        twist_content.angular.x = 0.0
+        twist_content.angular.y = 0.0
+        twist_content.angular.z = 0.0
+        if rclpy.ok(): # Only publish if context is still valid
+            self.publisher.publish(twist_msg_instance)
+        self.node.get_logger().info("PublishThread finished.")
+
 
 class SocketServer(threading.Thread):
-    def __init__(self, host='0.0.0.0', port=9090, buffer_size=1024):
+    def __init__(self, host='0.0.0.0', port=9090, buffer_size=1024, node_logger=None):
         threading.Thread.__init__(self)
         self.host = host
         self.port = port
@@ -167,140 +185,187 @@ class SocketServer(threading.Thread):
         self.client_connected = False
         self.running = True
         self.last_command = ''
-        self.daemon = True  # Thread will exit when main program exits
+        # self.daemon = True # Explicit join is preferred
+        self.logger = node_logger if node_logger else print # Use node logger or print
 
     def setup_server(self):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.settimeout(1.0) # Timeout for accept()
         self.sock.bind((self.host, self.port))
         self.sock.listen(1)
-        print(f"Socket server started on {self.host}:{self.port}")
+        self.logger(f"Socket server started on {self.host}:{self.port}")
 
     def run(self):
-        self.setup_server()
-        
+        try:
+            self.setup_server()
+        except Exception as e:
+            self.logger(f"Failed to setup socket server: {e}")
+            self.running = False
+            return
+
         while self.running:
-            print("Waiting for connection...")
             try:
                 client, addr = self.sock.accept()
                 self.client_connected = True
-                print(f"Connected to {addr}")
-                
+                self.logger(f"Connected to {addr}")
+                client.settimeout(1.0) # Timeout for client.recv()
+
                 while self.client_connected and self.running:
                     try:
                         data = client.recv(self.buffer_size)
                         if not data:
-                            print("Client disconnected")
+                            self.logger("Client disconnected (no data received).")
                             self.client_connected = False
                             break
-                            
-                        # Process received data
-                        command = data.decode('utf-8').strip()
-                        self.last_command = command
-                        print(f"Received command: {command}")
                         
+                        command = data.decode('utf-8').strip()
+                        if command: # Only update if command is not empty
+                           self.last_command = command
+                        # self.logger(f"Received command: {command}") # Can be noisy
+                        
+                    except socket.timeout:
+                        if not self.running: # Main thread requested stop
+                            self.client_connected = False
+                        continue # Continue to check self.running or wait for more data
+                    except ConnectionResetError:
+                        self.logger("Client connection reset.")
+                        self.client_connected = False
+                        break
                     except Exception as e:
-                        print(f"Error receiving data: {e}")
+                        self.logger(f"Error receiving data: {e}")
                         self.client_connected = False
                         break
                 
-                client.close()
+                if client:
+                    client.close()
+                self.client_connected = False # Reset flag
                 
+            except socket.timeout:
+                # self.sock.accept() timed out, loop again to check self.running
+                continue
             except Exception as e:
-                print(f"Connection error: {e}")
-                if self.sock:
-                    self.sock.close()
-                break
-                
-    def stop(self):
-        self.running = False
+                if self.running:
+                    self.logger(f"Socket server error: {e}")
+                self.running = False # Stop running on other major errors
+        
         if self.sock:
             self.sock.close()
+        self.logger("SocketServer thread finished.")
+            
+    def stop(self):
+        self.running = False
+        # The run loop will exit due to self.running and socket timeouts.
+        self.join(timeout=2.0) # Wait for the thread to finish
             
     def get_last_command(self):
+        # This is a basic way; for more complex scenarios, a thread-safe queue might be better.
         cmd = self.last_command
-        self.last_command = ''
+        self.last_command = '' # Clear after reading
         return cmd
 
-def vels(speed, turn):
-    return "currently:\tspeed %s\tturn %s " % (speed, turn)
+def vels(speed: float, turn: float) -> str:
+    return f"currently:\tspeed {speed:.2f}\tturn {turn:.2f}"
 
-if __name__=="__main__":
-    rospy.init_node('teleop_twist_socket')
+def main(args=None):
+    rclpy.init(args=args)
+    node = rclpy.create_node('teleop_twist_socket_node') # Changed node name slightly for clarity
 
-    speed = rospy.get_param("~speed", 0.5)
-    turn = rospy.get_param("~turn", 1.0)
-    speed_limit = rospy.get_param("~speed_limit", 1000)
-    turn_limit = rospy.get_param("~turn_limit", 1000)
-    repeat = rospy.get_param("~repeat_rate", 0.0)
-    stamped = rospy.get_param("~stamped", False)
-    twist_frame = rospy.get_param("~frame_id", '')
-    socket_port = rospy.get_param("~socket_port", 9090)
-    
-    if stamped:
-        TwistMsg = TwistStamped
+    # Declare and get parameters
+    node.declare_parameter('speed', 0.5)
+    node.declare_parameter('turn', 1.0)
+    node.declare_parameter('speed_limit', 1.0) # Max linear speed
+    node.declare_parameter('turn_limit', 1.0)  # Max angular speed
+    node.declare_parameter('repeat_rate', 10.0) # PublishThread internal publish rate if no new command
+    node.declare_parameter('stamped', False)
+    node.declare_parameter('frame_id', 'base_link') # Default frame_id if stamped
+    node.declare_parameter('socket_port', 9090)
 
-    # Start the publisher thread
-    pub_thread = PublishThread(repeat)
-    
-    # Start the socket server
-    socket_server = SocketServer(port=socket_port)
-    socket_server.start()
+    speed_param = node.get_parameter('speed').get_parameter_value().double_value
+    turn_param = node.get_parameter('turn').get_parameter_value().double_value
+    speed_limit = node.get_parameter('speed_limit').get_parameter_value().double_value
+    turn_limit = node.get_parameter('turn_limit').get_parameter_value().double_value
+    repeat = node.get_parameter('repeat_rate').get_parameter_value().double_value
+    use_stamped = node.get_parameter('stamped').get_parameter_value().bool_value
+    twist_frame = node.get_parameter('frame_id').get_parameter_value().string_value
+    socket_port = node.get_parameter('socket_port').get_parameter_value().integer_value
 
-    x = 0
-    y = 0
-    z = 0
-    th = 0
-    status = 0
+    pub_thread = None
+    socket_server = None
 
     try:
+        pub_thread = PublishThread(node, repeat, use_stamped, twist_frame)
+        socket_server = SocketServer(port=socket_port, node_logger=node.get_logger().info)
+        socket_server.start()
+
+        x, y, z, th = 0.0, 0.0, 0.0, 0.0
+        current_speed = speed_param
+        current_turn = turn_param
+
         pub_thread.wait_for_subscribers()
-        pub_thread.update(x, y, z, th, speed, turn)
+        pub_thread.update(x, y, z, th, current_speed, current_turn)
 
-        print("Socket server running. Awaiting commands...")
-        print(vels(speed, turn))
-
-        print(msg)
+        node.get_logger().info("Teleop node started. Listening for socket commands...")
+        node.get_logger().info(vels(current_speed, current_turn))
+        print(msg) # Show controls to the user
         
-        rate = rospy.Rate(10)  # 10Hz refresh rate
+        # Main loop rate for processing socket commands
+        loop_rate = node.create_rate(20) # Process commands at 20 Hz 
         
-        while not rospy.is_shutdown():
+        while rclpy.ok():
             command = socket_server.get_last_command()
             
             if command:
                 key = command[0] if command else ''
                 
-                if key in moveBindings.keys():
+                if key in moveBindings:
                     x = moveBindings[key][0]
                     y = moveBindings[key][1]
                     z = moveBindings[key][2]
                     th = moveBindings[key][3]
-                    print(f"Movement command: {key}")
-                elif key in speedBindings.keys():
-                    speed = min(speed_limit, speed * speedBindings[key][0])
-                    turn = min(turn_limit, turn * speedBindings[key][1])
-                    if speed == speed_limit:
-                        print("Linear speed limit reached!")
-                    if turn == turn_limit:
-                        print("Angular speed limit reached!")
-                    print(vels(speed, turn)) 
-                elif key == 's':
-                    x = 0
-                    y = 0
-                    z = 0
-                    th = 0
-                    print("Stopping")
-                elif key == 'quit' or key == '\x03':
-                    break
+                    # node.get_logger().debug(f"Movement: {key}")
+                elif key in speedBindings:
+                    current_speed = min(speed_limit, current_speed * speedBindings[key][0])
+                    current_turn = min(turn_limit, current_turn * speedBindings[key][1])
+                    if current_speed == speed_limit:
+                        node.get_logger().info("Linear speed limit reached!")
+                    if current_turn == turn_limit:
+                        node.get_logger().info("Angular speed limit reached!")
+                    node.get_logger().info(vels(current_speed, current_turn))
+                elif key == 's': # Custom command to stop
+                    x, y, z, th = 0.0, 0.0, 0.0, 0.0
+                    node.get_logger().info("Stopping robot.")
+                elif command == 'quit': # Check for 'quit' command
+                    node.get_logger().info("Quit command received via socket.")
+                    break 
+                # else: # Optionally, stop on unknown key
+                    # x, y, z, th = 0.0, 0.0, 0.0, 0.0
+                    # node.get_logger().info(f"Unknown key '{key}', stopping.")
                     
-                pub_thread.update(x, y, z, th, speed, turn)
-                
-            rate.sleep()
+                pub_thread.update(x, y, z, th, current_speed, current_turn)
+            
+            loop_rate.sleep()
 
+    except KeyboardInterrupt:
+        node.get_logger().info('KeyboardInterrupt, shutting down.')
     except Exception as e:
-        print(e)
-
+        node.get_logger().error(f"An unhandled error occurred in main: {e}")
+        import traceback
+        node.get_logger().error(traceback.format_exc())
     finally:
-        # Stop the threads
-        socket_server.stop()
-        pub_thread.stop()
+        node.get_logger().info('Initiating shutdown of threads and node...')
+        if socket_server and socket_server.is_alive():
+            socket_server.stop()
+            node.get_logger().info('SocketServer stopped.')
+        if pub_thread and pub_thread.is_alive():
+            pub_thread.stop()
+            node.get_logger().info('PublishThread stopped.')
+        
+        if rclpy.ok():
+            node.destroy_node()
+            rclpy.shutdown()
+        node.get_logger().info("ROS 2 node shutdown complete.")
+        print("Application terminated.")
+
+if __name__=="__main__":
+    main()
