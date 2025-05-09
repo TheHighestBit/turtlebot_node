@@ -268,17 +268,7 @@ if __name__=="__main__":
             command = socket_server.get_last_command()
             
             if command:
-                # Parse the command - could be JSON or simple character
-                try:
-                    # Try to parse as JSON
-                    cmd_data = json.loads(command)
-                    if 'key' in cmd_data:
-                        key = cmd_data['key']
-                    else:
-                        key = ''
-                except json.JSONDecodeError:
-                    # Treat as simple character command
-                    key = command[0] if command else ''
+                key = command[0] if command else ''
                 
                 if key in moveBindings.keys():
                     x = moveBindings[key][0]
@@ -286,7 +276,6 @@ if __name__=="__main__":
                     z = moveBindings[key][2]
                     th = moveBindings[key][3]
                     print(f"Movement command: {key}")
-                    
                 elif key in speedBindings.keys():
                     speed = min(speed_limit, speed * speedBindings[key][0])
                     turn = min(turn_limit, turn * speedBindings[key][1])
@@ -294,15 +283,13 @@ if __name__=="__main__":
                         print("Linear speed limit reached!")
                     if turn == turn_limit:
                         print("Angular speed limit reached!")
-                    print(vels(speed, turn))
-                    
-                elif key == 'stop':
+                    print(vels(speed, turn)) 
+                elif key == 's':
                     x = 0
                     y = 0
                     z = 0
                     th = 0
                     print("Stopping")
-                    
                 elif key == 'quit' or key == '\x03':
                     break
                     
